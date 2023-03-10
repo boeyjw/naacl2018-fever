@@ -17,14 +17,19 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default=None)
     parser.add_argument('--split',type=str)
     parser.add_argument('--count',type=int, default=1)
+
+    parser.add_argument('--datain', type=str, default="data/fever-data")
+    parser.add_argument('--dataout', type=str, default="data/fever")
     args = parser.parse_args()
 
     k = args.count
     split = args.split
+    datain = args.datain
+    dataout = args.dataout
     ranker = retriever.get_class('tfidf')(tfidf_path=args.model)
 
-    with open("data/fever-data/{0}.jsonl".format(split),"r") as f:
-        with open("data/fever/{0}.ns.pages.p{1}.jsonl".format(split,k),"w+") as f2:
+    with open("{0}/{1}.jsonl".format(datain, split),"r") as f:
+        with open("{0}/{1}.ns.pages.p{2}.jsonl".format(dataout,split,k),"w+") as f2:
             for line in tqdm(f.readlines()):
                 line = json.loads(line)
 
