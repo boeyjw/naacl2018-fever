@@ -1,2 +1,0 @@
-fever-api
-fever-allennlp

@@ -6,3 +6,8 @@ data/
 features/
 logs/
 models/
+
+data
+dumps
+models
+fever2-sample
