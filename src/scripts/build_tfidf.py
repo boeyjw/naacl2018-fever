@@ -58,7 +58,9 @@ if __name__ == '__main__':
         'tokenizer': args.tokenizer,
         'hash_size': args.hash_size,
         'ngram': args.ngram,
-        'doc_dict': doc_dict
+        'doc_dict': doc_dict,
+        # matrix definition: data = word count, row = hashed gram, col = document indexes
+        'count_matrix': count_matrix
     }
     pathlib.Path(args.out_dir).mkdir(parents=True, exist_ok=True) 
     retriever.utils.save_sparse_csr(filename, tfidf_mat, metadata)
