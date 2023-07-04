@@ -1,13 +1,16 @@
 from typing import Dict
+from pathlib import Path
 import json
 import logging
+import os
+import gzip
+import pickle as pkl
 
 from overrides import overrides
 import tqdm
 
 from allennlp.common import Params
 from allennlp.common.checks import ConfigurationError
-from allennlp.common.file_utils import cached_path
 # from allennlp.data.dataset import Dataset
 from allennlp.data.dataset import Batch
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
@@ -15,11 +18,6 @@ from allennlp.data.fields import Field, TextField, LabelField
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Tokenizer, WordTokenizer
-from common.dataset.reader import JSONLineReader
-from common.util.random import SimpleRandom
-from retrieval.fever_doc_db import FeverDocDB
-from rte.riedel.data import FEVERPredictions2Formatter, FEVERLabelSchema, FEVERGoldFormatter
-from common.dataset.data_set import DataSet as FEVERDataSet
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
@@ -40,58 +38,47 @@ class FEVERReader(DatasetReader):
     """
 
     def __init__(self,
-                 db: FeverDocDB,
-                 sentence_level = False,
                  wiki_tokenizer: Tokenizer = None,
                  claim_tokenizer: Tokenizer = None,
-                 token_indexers: Dict[str, TokenIndexer] = None,
-                 filtering: str = None) -> None:
-        self._sentence_level = sentence_level
+                 token_indexers: Dict[str, TokenIndexer] = None) -> None:
         self._wiki_tokenizer = wiki_tokenizer or WordTokenizer()
         self._claim_tokenizer = claim_tokenizer or WordTokenizer()
         self._token_indexers = token_indexers or {'tokens': SingleIdTokenIndexer()}
 
-        self.db = db
+        self._ID2LABEL = {0: "SUPPORTS", 1: "NOT ENOUGH INFO", 2: "REFUTES"}
 
-        self.formatter = FEVERGoldFormatter(set(self.db.get_doc_ids()), FEVERLabelSchema(),filtering=filtering)
-        self.reader = JSONLineReader()
-
-
-    def get_doc_line(self,doc,line):
-        lines = self.db.get_doc_lines(doc)
-        if line > -1:
-            try:
-                return lines.split("\n")[line].split("\t")[1]
-            except:
-                raise Exception(doc, ": ", line)
-        else:
-            non_empty_lines = [line.split("\t")[1] for line in lines.split("\n") if len(line.split("\t"))>1 and len(line.split("\t")[1].strip())]
-            return non_empty_lines[SimpleRandom.get_instance().next_rand(0,len(non_empty_lines)-1)]
+    def read_data(self, fp):
+        fn = gzip.open(fp, "rb") if fp.suffix == ".gz" else open(fp, "r")
+        fp_str = str(fp)
+        try:
+            if ".jsonl" in os.path.basename(fp_str):
+                data = [json.loads(l.decode("utf8") if fp.suffix == ".gz" else l) for l in fn.readlines()]
+            elif ".json" in os.path.basename(fp_str):
+                data = json.loads(fn.read())
+            elif ".pkl.gz" in os.path.basename(fp_str):
+                data = pkl.loads(fn.read())
+            else:
+                raise NotImplementedError(f"{os.path.basename(fp)} suffix is unsupported.")
+        finally:
+            fn.close()
+        return data
 
     @overrides
     def read(self, file_path: str):
-
         instances = []
 
-        ds = FEVERDataSet(file_path,reader=self.reader, formatter=self.formatter)
-        ds.read()
+        ds = self.read_data(Path(file_path))
 
-        for instance in tqdm.tqdm(ds.data):
+        for instance in tqdm.tqdm(ds):
             if instance is None:
                 continue
 
-            if not self._sentence_level:
-                pages = set(ev[0] for ev in instance["evidence"])
-                premise = " ".join([self.db.get_doc_text(p) for p in pages])
-            else:
-                lines = set([self.get_doc_line(d[0],d[1]) for d in instance['evidence']])
-                premise = " ".join(lines)
-
+            premise = instance["evidence"]
             if len(premise.strip()) == 0:
                 premise = ""
 
             hypothesis = instance["claim"]
-            label = instance["label_text"]
+            label = self._ID2LABEL[instance["labels"]]
             instances.append(self.text_to_instance(premise, hypothesis, label))
         if not instances:
             raise ConfigurationError("No instances were read from the given filepath {}. "
@@ -121,12 +108,8 @@ class FEVERReader(DatasetReader):
         # token_indexers = TokenIndexer.dict_from_params(params.pop('token_indexers', {}))
         # Hack as TokenIndexer does not have "dict_from_params" function
         token_indexers = {'tokens': SingleIdTokenIndexer(lowercase_tokens=True)}
-        sentence_level = params.pop("sentence_level",False)
-        db = FeverDocDB(params.pop("database","data/fever.db"))
         params.assert_empty(cls.__name__)
-        return FEVERReader(db=db,
-                           sentence_level=sentence_level,
-                           claim_tokenizer=claim_tokenizer,
+        return FEVERReader(claim_tokenizer=claim_tokenizer,
                            wiki_tokenizer=wiki_tokenizer,
                            token_indexers=token_indexers)
 

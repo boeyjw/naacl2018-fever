@@ -5,26 +5,21 @@ from typing import List, Union, Dict, Any
 
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
-from allennlp.common import Params
-from allennlp.common.tee_logger import TeeLogger
 #from allennlp.common.util import prepare_environment
-from allennlp.data import Vocabulary, DataIterator, DatasetReader, Tokenizer, TokenIndexer
-from allennlp.models import Model, archive_model, load_archive
-from allennlp.service.predictors import Predictor
-from allennlp.training import Trainer
+from allennlp.data import Tokenizer
+from allennlp.models import load_archive
 from common.util.log_helper import LogHelper
-from retrieval.fever_doc_db import FeverDocDB
-from rte.parikh.reader import FEVERReader
+from rte.parikh.boey_reader import FEVERReader
 from tqdm import tqdm
 import argparse
 import logging
-import sys
 import json
 import numpy as np
+from scipy.special import softmax
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-def eval_model(db: FeverDocDB, args) -> Model:
+def eval_model(args):
     archive = load_archive(args.archive_file, cuda_device=args.cuda_device)
 
     config = archive.config
@@ -34,35 +29,34 @@ def eval_model(db: FeverDocDB, args) -> Model:
     model.eval()
 
     # COMMENT: token_indexers = None uses the default SingleID Tokenizer
-    reader = FEVERReader(db,
-                                 sentence_level=ds_params.pop("sentence_level",False),
-                                 wiki_tokenizer=Tokenizer.from_params(ds_params.pop('wiki_tokenizer', {})),
-                                 claim_tokenizer=Tokenizer.from_params(ds_params.pop('claim_tokenizer', {})),
-                                 token_indexers=None)
+    reader = FEVERReader(wiki_tokenizer=Tokenizer.from_params(ds_params.pop('wiki_tokenizer', {})),
+                        claim_tokenizer=Tokenizer.from_params(ds_params.pop('claim_tokenizer', {})),
+                        token_indexers=None)
 
     logger.info("Reading training data from %s", args.in_file)
     data = reader.read(args.in_file).instances
 
     actual = []
     predicted = []
+    predict_proba = []
+    predict_logits = []
 
     if args.log is not None:
         f = open(args.log,"w+")
 
     for item in tqdm(data):
-        if item.fields["premise"] is None or item.fields["premise"].sequence_length() == 0:
-            cls = "NOT ENOUGH INFO"
-        else:
-            prediction = model.forward_on_instance(item)
-            cls = model.vocab._index_to_token["labels"][np.argmax(prediction["label_probs"])]
+        prediction = model.forward_on_instance(item)
+        cls = model.vocab._index_to_token["labels"][np.argmax(prediction["label_probs"])]
 
         if "label" in item.fields:
             actual.append(item.fields["label"].label)
         predicted.append(cls)
+        predict_proba.append(prediction["label_probs"])
+        predict_logits.append(prediction["label_logits"])
 
         if args.log is not None:
             if "label" in item.fields:
-                f.write(json.dumps({"actual":item.fields["label"].label,"predicted":cls})+"\n")
+                f.write(json.dumps({"predicted_logits":predict_logits, "predicted":cls, "predicted_proba": predict_proba})+"\n")
             else:
                 f.write(json.dumps({"predicted":cls})+"\n")
 
@@ -70,13 +64,10 @@ def eval_model(db: FeverDocDB, args) -> Model:
         f.close()
 
 
-    if len(actual) > 0:
-        print(accuracy_score(actual, predicted))
-        print(classification_report(actual, predicted))
-        print(confusion_matrix(actual, predicted))
-
-    return model
-
+    # if len(actual) > 0:
+    #     print(accuracy_score(actual, predicted))
+    #     print(classification_report(actual, predicted))
+    #     print(confusion_matrix(actual, predicted))
 
 if __name__ == "__main__":
     LogHelper.setup()
@@ -86,12 +77,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('db', type=str, help='/path/to/saved/db.db')
     parser.add_argument('archive_file', type=str, help='/path/to/saved/db.db')
     parser.add_argument('in_file', type=str, help='/path/to/saved/db.db')
     parser.add_argument('--log', required=False, default=None,  type=str, help='/path/to/saved/db.db')
 
-    parser.add_argument("--cuda-device", type=int, default=-1, help='id of GPU to use (if any)')
+    parser.add_argument("--cuda-device", type=int, default=0, help='id of GPU to use (if any)')
     parser.add_argument('-o', '--overrides',
                            type=str,
                            default="",
@@ -100,5 +90,4 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
-    db = FeverDocDB(args.db)
-    eval_model(db,args)
+    eval_model(args)
