@@ -38,8 +38,6 @@ def eval_model(args):
 
     actual = []
     predicted = []
-    predict_proba = []
-    predict_logits = []
 
     if args.log is not None:
         f = open(args.log,"w+")
@@ -51,12 +49,10 @@ def eval_model(args):
         if "label" in item.fields:
             actual.append(item.fields["label"].label)
         predicted.append(cls)
-        predict_proba.append(prediction["label_probs"])
-        predict_logits.append(prediction["label_logits"])
 
         if args.log is not None:
             if "label" in item.fields:
-                f.write(json.dumps({"predicted_logits":predict_logits, "predicted":cls, "predicted_proba": predict_proba})+"\n")
+                f.write(json.dumps({"predicted_logits":prediction["label_logits"].tolist(), "predicted":cls, "predicted_proba": prediction["label_probs"].tolist()})+"\n")
             else:
                 f.write(json.dumps({"predicted":cls})+"\n")
 
